@@ -14,38 +14,31 @@ def parse_options():
     parser.add_argument('--in',
                         dest='infile',
                         default=None, 
-                        help='Name of the input file to be modified. Use --stdin if you want to read \
+                        help='Name of the input file to be modified. Leave out if you want to read \
                         the input from stdin.')
     
     parser.add_argument('--out',
-                        dest='out',
+                        dest='outfile',
                         default=None, 
-                        help='Name of the output file. Use --stdout if you want to write \
+                        help='Name of the output file. Leave out if you want to write \
                         the output to stdout.')
-                        
-    parser.add_argument('--stdout',
-                        dest='stdout',
-                        default=False,
-                        action="store_true",
-                        help='Write output into stdout.')
-
-    parser.add_argument('--stdin',
-                        dest='stdin',
-                        default=False,
-                        action="store_true",
-                        help='Read input from stdin.')
     
     parser.add_argument('--in-place',
                         dest='in_place',
                         default=False, 
                         action="store_true",
-                        help='Save modifications in-place to the original file.')
+                        help='Save modifications in-place to the original file given with --in.')
                         
     parser.add_argument('--replacements',
                         dest='replacements',
                         default=None,
                         help='Name of the file containing (line by line) pairs of \"old new\" replacements.')
    
+    parser.add_argument('--default-replacement',
+                        dest='default_replacement',
+                        default=None,
+                        help='Value to use when the value was not found in --replacements. Default: keep as is.')
+
     parser.add_argument('--header',
                         dest='header',
                         default=False,
@@ -135,24 +128,28 @@ def deduce_delimiter(lines=[], strip=False):
 
 
 class Replacer:
-    
+
     def __init__(self):
         self.exp_line_len = None
         self.linecounter = 0
         self.word_order = None
-        
+        self.default_replacement = None
+
     def check_line_len(self, line):
         if self.exp_line_len is None:
             self.exp_line_len = len(line)
             return True
         else:
             return len(line) == self.exp_line_len
-        
+
+    def set_default(self, val):
+        self.default_replacement = val
+
     def replace_line(self, kwargs, ip_line=None, is_header=False):
-    
+
         if kwargs['strip']:
             ip_line = ip_line.strip()
-            
+
         if kwargs['column'] is False:
             op_line = [ip_line]
             targets = [0]
@@ -161,7 +158,7 @@ class Replacer:
         else:
             op_line = ip_line.split(kwargs['sep'])
             targets = kwargs['column']
-        
+
         if self.check_line_len(op_line) is not True:
             sys.stderr.write('# Error: the number of columns in the input is not constant.\n')
             sys.stderr.write('# Found {} columns on line {}.\n'\
@@ -212,7 +209,9 @@ class Replacer:
                         replaced = True
                     except KeyError:
                         kwargs['not_rep_counter'] += 1
-            
+                        if self.default_replacement is not None:
+                            op_line[i] = self.default_replacement
+
             if replaced:
                 kwargs['n_line_match'] += 1
             else:
@@ -266,7 +265,7 @@ def finish(success, kwargs):
     options = Collect(kwargs)
                 
     # close streams
-    if options.stdin is False:
+    if options.infile is not None:
         options.ipstream.close()
         
     if options.in_place and success:
@@ -283,7 +282,7 @@ def finish(success, kwargs):
                 shutil.move(tmp_name, options.infile)
             except:
                 sys.stderr.write("# Replacement unsuccessful.\n")
-    elif options.out is not None:
+    elif options.outfile is not None:
         options.opstream.close()
     else:
         pass
@@ -303,51 +302,50 @@ def finish(success, kwargs):
     
     sys.exit()
 
+
 def main():
-    
+
     options = parse_options()
-    
+
     # set up the input
-    if options.stdin:
-        ip = sys.stdin
-    elif options.infile is not None:
+    if options.infile is not None:
         ip = open(options.infile, 'r')
     else:
-        sys.stderr.write('# No input specified. Use --in or --stdin.\n')
-        sys.exit()
+        ip = sys.stdin
+        if options.in_place:
+            sys.stderr.write('# --in-place can only be used \
+            together with --in to specify the input file name.\n')
+            sys.exit()
     options.ipstream = ip
-        
-    #set up output
+
+    # set up output
     if options.in_place:
         op = tempfile.NamedTemporaryFile(mode='w+t', delete=False)
-    elif options.out is not None:
-        op = open(options.out, 'w')
-    elif options.stdout:
-        op = sys.stdout
+    elif options.outfile is not None:
+        op = open(options.outfile, 'w')
     else:
-        sys.stderr.write('# No output specified. \
-        Use one of these: --out --stdout --in-place.\n')
-        sys.exit()
+        op = sys.stdout
     options.opstream = op
-                
+
     # parse the column notation
     if options.column is not False:
-        options.column = [int(i.strip())-1 for i in options.column.split(',')]
-    
+        options.column = [int(i.strip()) - 1
+                          for i in options.column.split(',')]
+
     # read the replacements into a dict
     reps = {}
     with open(options.replacements, 'r') as f:
         for line in f:
-            l = line.strip()
-            if l != '':
-                l = l.split()
-                assert len(l) == 2
-                reps[l[0]] = l[1]
+            line = line.strip()
+            if line != '':
+                line = line.split()
+                assert len(line) == 2
+                reps[line[0]] = line[1]
     options.reps = reps
     info_line = "# {} replacements read from {}.\n"
     info_line = info_line.format(len(options.reps), options.replacements)
     sys.stderr.write(info_line)
-                 
+
     options.rep_counter = 0
     options.not_rep_counter = 0
     options.n_line_match = 0
@@ -355,28 +353,30 @@ def main():
     replacer = Replacer()
     start_lines = []
     kwargs = {}
-    
+
     # always read the first 666 lines into memory
     for ip_line in options.ipstream:
         if len(start_lines) < 666:
             start_lines.append(ip_line)
             if len(start_lines) == 666:
                 break
-        
+
     # check how the input looks like to define the delimiters
-    kwargs = update_delimiters(options = options, start_lines = start_lines)
+    kwargs = update_delimiters(options=options, start_lines=start_lines)
 
     # process the lines
     is_first_line = True
     for ip in (start_lines, options.ipstream):
         for line in ip:
-            ok = replacer.replace_line(kwargs, ip_line = line, is_header = is_first_line)
+            ok = replacer.replace_line(kwargs,
+                                       ip_line=line,
+                                       is_header=is_first_line)
             is_first_line = False
             if not ok:
                 finish(False, kwargs)
-            
+
     finish(True, kwargs)
-            
+
+
 if __name__ == '__main__':
     main()
-    

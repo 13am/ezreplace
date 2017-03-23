@@ -2,7 +2,7 @@
 
 DESCRIPTION
 
-Use ezreplace.py to replace words in input. Input and output may be from files or a streams.
+Use ezreplace.py to replace words in input. Input and output may be files or streams.
 
 Examples:
 
@@ -18,7 +18,7 @@ B. As above but now assume the file is divided into columns and only replace the
 
 C. Read input from STDIN and write output to STDOUT.
 
-> gunzip -c doc.txt.gz | ezreplace.py --replacements nice_words.txt --stdout | gzip -c > nicer_doc.txt.gz
+> gunzip -c doc.txt.gz | ezreplace.py --replacements nice_words.txt | gzip -c > nicer_doc.txt.gz
 
 REQUIREMENTS
 
